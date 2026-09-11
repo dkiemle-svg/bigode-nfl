@@ -215,6 +215,9 @@ td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
 
 .postado-por{ color:var(--text-faint); font-size:.78rem; }
 
+.bet-print-link{ display:inline-block; align-self:flex-start; }
+.bet-print-img{ max-width:220px; max-height:220px; object-fit:cover; border-radius:var(--radius-sm); border:1px solid var(--border); }
+
 @media (max-width:640px){
   .app-shell{ padding:18px 14px 70px; }
   .selecao-row{ grid-template-columns:1fr; }

@@ -30,6 +30,7 @@
     toast: null,
     novoBilheteOpen: false,
     novoBilheteSelecoes: [{ descricao: '', jogo: '', data: '', hora: '' }],
+    novoBilheteSalvando: false,
     editEntrada: null,   // id da entrada com o form de editar valor/odd aberto
     cashoutEntrada: null, // id da entrada com o form de cashout aberto
     pendingDeleteBilhete: null,
@@ -282,6 +283,17 @@
 
   // ---------------- mutações: bilhetes ----------------
 
+  function uploadImagemBilhete(file) {
+    var extMatch = /\.([a-z0-9]+)$/i.exec(file.name || '');
+    var ext = (extMatch ? extMatch[1] : 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    var path = state.session.user.id + '/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    return sb.storage.from('bilhetes').upload(path, file, { cacheControl: '3600', upsert: false }).then(function (res) {
+      if (res.error) throw res.error;
+      var pub = sb.storage.from('bilhetes').getPublicUrl(path);
+      return pub.data.publicUrl;
+    });
+  }
+
   function criarBilhete(data) {
     var payload = {
       criado_por: state.session.user.id,
@@ -291,10 +303,12 @@
       obs: data.obs.trim(),
       valor_referencia: Number(data.valor),
       odd_referencia: Number(data.odd),
-      selecoes: data.selecoes
+      selecoes: data.selecoes,
+      imagem_url: data.imagemUrl || null
     };
     sb.from('bilhetes').insert(payload).then(function (res) {
-      if (res.error) { showToast('Não deu pra postar o bilhete: ' + res.error.message); return; }
+      ui.novoBilheteSalvando = false;
+      if (res.error) { showToast('Não deu pra postar o bilhete: ' + res.error.message); render(); return; }
       ui.novoBilheteOpen = false;
       ui.novoBilheteSelecoes = [{ descricao: '', jogo: '', data: '', hora: '' }];
       showToast('Bilhete postado!');
@@ -532,6 +546,7 @@
     out += '<div class="form-field"><label>Odd total (print)</label><input name="odd" type="number" step="0.01" min="0" required></div>';
     out += '</div>';
     out += '<div class="form-field"><label>Observação (opcional)</label><textarea name="obs" placeholder="Ex.: casa aplicou boost, etc."></textarea></div>';
+    out += '<div class="form-field"><label>Print do bilhete (opcional)</label><input type="file" name="imagem" accept="image/*"></div>';
     out += '<div class="selecoes-edit">';
     out += '<label style="font-size:.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em">Seleções do bilhete</label>';
     ui.novoBilheteSelecoes.forEach(function (row, i) {
@@ -545,7 +560,7 @@
     });
     out += '<button type="button" class="btn btn-ghost btn-sm" data-action="add-selecao" style="width:fit-content">+ Adicionar seleção</button>';
     out += '</div>';
-    out += '<div class="bet-actions"><button type="submit" class="btn btn-primary">Postar bilhete</button><button type="button" class="btn btn-ghost" data-action="novo-bilhete-cancelar">Cancelar</button></div>';
+    out += '<div class="bet-actions"><button type="submit" class="btn btn-primary" ' + (ui.novoBilheteSalvando ? 'disabled' : '') + '>' + (ui.novoBilheteSalvando ? 'Enviando…' : 'Postar bilhete') + '</button><button type="button" class="btn btn-ghost" data-action="novo-bilhete-cancelar" ' + (ui.novoBilheteSalvando ? 'disabled' : '') + '>Cancelar</button></div>';
     out += '</form>';
     return out;
   }
@@ -554,6 +569,9 @@
     var out = '<div class="bet-card">';
     out += '<div class="bet-top-row"><span class="bet-meta">' + escapeHtml(b.casa) + (b.codigo ? ' · #' + escapeHtml(b.codigo) : '') + ' · postado por ' + escapeHtml(nomeDe(b.criado_por)) + '</span></div>';
     out += '<div class="bet-event">' + escapeHtml(b.evento) + '</div>';
+    if (b.imagem_url) {
+      out += '<a href="' + escapeHtml(b.imagem_url) + '" target="_blank" rel="noopener" class="bet-print-link"><img class="bet-print-img" src="' + escapeHtml(b.imagem_url) + '" alt="Print do bilhete" loading="lazy"></a>';
+    }
     out += '<div class="bet-summary">'
       + '<div class="bet-num"><span>Valor no print</span><b>' + fmtBRL(b.valor_referencia) + '</b></div>'
       + '<div class="bet-num"><span>Odd</span><b>' + fmtOdd(b.odd_referencia) + '</b></div>'
@@ -612,7 +630,7 @@
       id: e.id, valor: e.valor, odd: e.odd, status: e.status, valor_cashout: e.valor_cashout,
       resolvido_em: e.resolvido_em, criado_em: e.criado_em,
       evento: b.evento || '(bilhete removido)', casa: b.casa || '', codigo: b.codigo || null,
-      selecoes: b.selecoes || []
+      selecoes: b.selecoes || [], imagem_url: b.imagem_url || null
     };
   }
 
@@ -681,10 +699,12 @@
         + '<button type="button" class="btn btn-ghost btn-sm" data-action="entrada-cashout-cancelar">Cancelar</button>'
         + '</form>' : '';
 
+    var imgHtml = e.imagem_url ? '<a href="' + escapeHtml(e.imagem_url) + '" target="_blank" rel="noopener" class="bet-print-link"><img class="bet-print-img" src="' + escapeHtml(e.imagem_url) + '" alt="Print do bilhete" loading="lazy"></a>' : '';
+
     return '<div class="bet-card" style="--stripe:' + stripe + '">'
       + '<div class="bet-top-row">' + statusChip + '<span class="bet-meta">' + escapeHtml(e.casa) + (e.codigo ? ' · #' + escapeHtml(e.codigo) : '') + (semanaLbl ? ' · ' + escapeHtml(semanaLbl) : '') + '</span></div>'
       + '<div class="bet-event">' + escapeHtml(e.evento) + '</div>'
-      + summaryHtml + selecoesHtml
+      + imgHtml + summaryHtml + selecoesHtml
       + '<div class="bet-meta">' + (resolved ? 'Resolvida em ' + fmtDateTime(e.resolvido_em) : 'Registrada em ' + fmtDateTime(e.criado_em)) + '</div>'
       + cashoutFormHtml
       + '<div class="bet-actions">' + actions + '</div>'
@@ -850,12 +870,34 @@
 
     if (form.matches('form[data-form="novo-bilhete"]')) {
       e.preventDefault();
+      if (ui.novoBilheteSalvando) return;
       var fd2 = new FormData(form);
-      criarBilhete({
+      var payloadBase = {
         casa: fd2.get('casa'), evento: fd2.get('evento'), codigo: fd2.get('codigo') || '',
         obs: fd2.get('obs') || '', valor: fd2.get('valor'), odd: fd2.get('odd'),
         selecoes: ui.novoBilheteSelecoes.filter(function (r) { return r.descricao.trim(); })
-      });
+      };
+      var arquivoImagem = fd2.get('imagem');
+      ui.novoBilheteSalvando = true;
+      render();
+      if (arquivoImagem && arquivoImagem.size > 0) {
+        if (arquivoImagem.size > 8 * 1024 * 1024) {
+          ui.novoBilheteSalvando = false;
+          showToast('A imagem precisa ter até 8MB.');
+          render();
+          return;
+        }
+        uploadImagemBilhete(arquivoImagem).then(function (url) {
+          payloadBase.imagemUrl = url;
+          criarBilhete(payloadBase);
+        }).catch(function (err) {
+          ui.novoBilheteSalvando = false;
+          showToast('Não deu pra enviar o print: ' + (err && err.message ? err.message : 'tente de novo'));
+          render();
+        });
+      } else {
+        criarBilhete(payloadBase);
+      }
       return;
     }
 
