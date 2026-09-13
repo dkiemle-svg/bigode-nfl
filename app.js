@@ -606,8 +606,8 @@
     out += '<label>Print do bilhete (opcional)</label>';
     out += '<input type="file" accept="image/*" data-action-file="imagem-input">';
     if (ui.novoBilheteArquivoImagem) out += '<div class="helper-text">Selecionado: ' + escapeHtml(ui.novoBilheteArquivoImagem.name) + '</div>';
-    out += '<button type="button" class="btn btn-ghost btn-sm" data-action="ler-bilhete-ia" style="margin-top:6px;width:fit-content" ' + (!ui.novoBilheteArquivoImagem || ui.novoBilheteLendo ? 'disabled' : '') + '>' + (ui.novoBilheteLendo ? '🔍 Lendo…' : '🔍 Ler bilhete com IA') + '</button>';
-    out += '<div class="helper-text">Escolha a foto e clique em "Ler bilhete com IA" pra preencher os campos abaixo sozinho — depois é só conferir e ajustar o que precisar.</div>';
+    out += '<button type="button" class="btn btn-ghost btn-sm" data-action="ler-bilhete-ia" style="margin-top:6px;width:fit-content" ' + (!ui.novoBilheteArquivoImagem || ui.novoBilheteLendo ? 'disabled' : '') + '>' + (ui.novoBilheteLendo ? '🔍 Lendo…' : (ui.novoBilheteCampos ? '🔍 Ler de novo' : '🔍 Ler bilhete com IA')) + '</button>';
+    out += '<div class="helper-text">' + (ui.novoBilheteLendo ? 'Lendo o print, só um instante…' : 'Assim que você escolhe a foto, a leitura começa sozinha e preenche os campos abaixo — depois é só conferir e ajustar o que precisar. Se preferir, pode preencher tudo na mão sem anexar foto nenhuma.') + '</div>';
     out += '</div>';
     out += '<div class="form-grid">';
     out += '<div class="form-field"><label>Casa</label><input name="casa" type="text" placeholder="Bet365, Superbet, Betano…" value="' + escapeHtml(campos.casa || '') + '" required></div>';
@@ -1017,6 +1017,7 @@
       ui.novoBilheteArquivoImagem = (target.files && target.files[0]) ? target.files[0] : null;
       ui.novoBilheteCampos = null;
       render();
+      if (ui.novoBilheteArquivoImagem) lerBilheteComIA();
       return;
     }
 
