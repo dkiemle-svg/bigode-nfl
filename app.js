@@ -31,6 +31,9 @@
     novoBilheteOpen: false,
     novoBilheteSelecoes: [{ descricao: '', jogo: '', data: '', hora: '' }],
     novoBilheteSalvando: false,
+    novoBilheteArquivoImagem: null,   // File selecionado (guardado aqui pra sobreviver a re-renders)
+    novoBilheteCampos: null,           // dados pré-preenchidos pela leitura automática (IA)
+    novoBilheteLendo: false,
     editEntrada: null,   // id da entrada com o form de editar valor/odd aberto
     cashoutEntrada: null, // id da entrada com o form de cashout aberto
     pendingDeleteBilhete: null,
@@ -283,6 +286,64 @@
 
   // ---------------- mutações: bilhetes ----------------
 
+  function fileParaBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = reader.result || '';
+        var idx = String(result).indexOf(',');
+        resolve(idx >= 0 ? String(result).slice(idx + 1) : String(result));
+      };
+      reader.onerror = function () { reject(reader.error); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function lerBilheteComIA() {
+    var file = ui.novoBilheteArquivoImagem;
+    if (!file) { showToast('Escolha a foto do print primeiro.'); return; }
+    if (ui.novoBilheteLendo) return;
+    ui.novoBilheteLendo = true;
+    render();
+    fileParaBase64(file).then(function (base64) {
+      return sb.functions.invoke('parse-bilhete', {
+        body: { imagem_base64: base64, media_type: file.type || 'image/jpeg' }
+      });
+    }).then(function (res) {
+      ui.novoBilheteLendo = false;
+      if (res.error) {
+        showToast('Não deu pra ler o print: ' + res.error.message);
+        render();
+        return;
+      }
+      var dados = res.data;
+      if (!dados || dados.erro) {
+        showToast(dados && dados.erro ? dados.erro : 'Não consegui ler esse print. Preencha manualmente.');
+        render();
+        return;
+      }
+      ui.novoBilheteCampos = {
+        casa: dados.casa || '',
+        evento: dados.evento || '',
+        codigo: dados.codigo || '',
+        valor: (dados.valor === 0 || dados.valor) ? dados.valor : '',
+        odd: (dados.odd === 0 || dados.odd) ? dados.odd : '',
+        obs: dados.obs || ''
+      };
+      if (dados.selecoes && dados.selecoes.length) {
+        ui.novoBilheteSelecoes = dados.selecoes.map(function (s) {
+          return { descricao: s.descricao || '', jogo: s.jogo || '', data: s.data || '', hora: s.hora || '' };
+        });
+      }
+      showToast('Print lido! Confira os dados antes de postar.');
+      render();
+    }).catch(function () {
+      ui.novoBilheteLendo = false;
+      showToast('Não deu pra ler o print agora. Tente de novo ou preencha manualmente.');
+      render();
+    });
+  }
+
   function uploadImagemBilhete(file) {
     var extMatch = /\.([a-z0-9]+)$/i.exec(file.name || '');
     var ext = (extMatch ? extMatch[1] : 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
@@ -311,6 +372,8 @@
       if (res.error) { showToast('Não deu pra postar o bilhete: ' + res.error.message); render(); return; }
       ui.novoBilheteOpen = false;
       ui.novoBilheteSelecoes = [{ descricao: '', jogo: '', data: '', hora: '' }];
+      ui.novoBilheteArquivoImagem = null;
+      ui.novoBilheteCampos = null;
       showToast('Bilhete postado!');
       refreshAll();
     });
@@ -537,16 +600,23 @@
   }
 
   function renderNovoBilheteForm() {
+    var campos = ui.novoBilheteCampos || {};
     var out = '<form class="card new-bilhete-form" data-form="novo-bilhete">';
-    out += '<div class="form-grid">';
-    out += '<div class="form-field"><label>Casa</label><input name="casa" type="text" placeholder="Bet365, Superbet, Betano…" required></div>';
-    out += '<div class="form-field"><label>Evento</label><input name="evento" type="text" placeholder="Ex.: SF 49ers x LA Rams" required></div>';
-    out += '<div class="form-field"><label>Código/Ref. (opcional)</label><input name="codigo" type="text"></div>';
-    out += '<div class="form-field"><label>Valor apostado (print)</label><input name="valor" type="number" step="0.01" min="0" required></div>';
-    out += '<div class="form-field"><label>Odd total (print)</label><input name="odd" type="number" step="0.01" min="0" required></div>';
+    out += '<div class="form-field">';
+    out += '<label>Print do bilhete (opcional)</label>';
+    out += '<input type="file" accept="image/*" data-action-file="imagem-input">';
+    if (ui.novoBilheteArquivoImagem) out += '<div class="helper-text">Selecionado: ' + escapeHtml(ui.novoBilheteArquivoImagem.name) + '</div>';
+    out += '<button type="button" class="btn btn-ghost btn-sm" data-action="ler-bilhete-ia" style="margin-top:6px;width:fit-content" ' + (!ui.novoBilheteArquivoImagem || ui.novoBilheteLendo ? 'disabled' : '') + '>' + (ui.novoBilheteLendo ? '🔍 Lendo…' : '🔍 Ler bilhete com IA') + '</button>';
+    out += '<div class="helper-text">Escolha a foto e clique em "Ler bilhete com IA" pra preencher os campos abaixo sozinho — depois é só conferir e ajustar o que precisar.</div>';
     out += '</div>';
-    out += '<div class="form-field"><label>Observação (opcional)</label><textarea name="obs" placeholder="Ex.: casa aplicou boost, etc."></textarea></div>';
-    out += '<div class="form-field"><label>Print do bilhete (opcional)</label><input type="file" name="imagem" accept="image/*"></div>';
+    out += '<div class="form-grid">';
+    out += '<div class="form-field"><label>Casa</label><input name="casa" type="text" placeholder="Bet365, Superbet, Betano…" value="' + escapeHtml(campos.casa || '') + '" required></div>';
+    out += '<div class="form-field"><label>Evento</label><input name="evento" type="text" placeholder="Ex.: SF 49ers x LA Rams" value="' + escapeHtml(campos.evento || '') + '" required></div>';
+    out += '<div class="form-field"><label>Código/Ref. (opcional)</label><input name="codigo" type="text" value="' + escapeHtml(campos.codigo || '') + '"></div>';
+    out += '<div class="form-field"><label>Valor apostado (print)</label><input name="valor" type="number" step="0.01" min="0" value="' + escapeHtml(campos.valor != null ? campos.valor : '') + '" required></div>';
+    out += '<div class="form-field"><label>Odd total (print)</label><input name="odd" type="number" step="0.01" min="0" value="' + escapeHtml(campos.odd != null ? campos.odd : '') + '" required></div>';
+    out += '</div>';
+    out += '<div class="form-field"><label>Observação (opcional)</label><textarea name="obs" placeholder="Ex.: casa aplicou boost, etc.">' + escapeHtml(campos.obs || '') + '</textarea></div>';
     out += '<div class="selecoes-edit">';
     out += '<label style="font-size:.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em">Seleções do bilhete</label>';
     ui.novoBilheteSelecoes.forEach(function (row, i) {
@@ -877,7 +947,7 @@
         obs: fd2.get('obs') || '', valor: fd2.get('valor'), odd: fd2.get('odd'),
         selecoes: ui.novoBilheteSelecoes.filter(function (r) { return r.descricao.trim(); })
       };
-      var arquivoImagem = fd2.get('imagem');
+      var arquivoImagem = ui.novoBilheteArquivoImagem;
       ui.novoBilheteSalvando = true;
       render();
       if (arquivoImagem && arquivoImagem.size > 0) {
@@ -942,6 +1012,14 @@
 
   appEl.addEventListener('change', function (e) {
     var target = e.target;
+
+    if (target.matches('input[type="file"][data-action-file="imagem-input"]')) {
+      ui.novoBilheteArquivoImagem = (target.files && target.files[0]) ? target.files[0] : null;
+      ui.novoBilheteCampos = null;
+      render();
+      return;
+    }
+
     var tabKey = target.getAttribute('data-filtertab');
     if (tabKey && ui.filtros[tabKey]) {
       if (target.matches('[data-filter="time"]')) { ui.filtros[tabKey].time = target.value; render(); return; }
@@ -966,7 +1044,8 @@
       render();
     }
     else if (action === 'novo-bilhete-abrir') { ui.novoBilheteOpen = true; render(); }
-    else if (action === 'novo-bilhete-cancelar') { ui.novoBilheteOpen = false; ui.novoBilheteSelecoes = [{ descricao: '', jogo: '', data: '', hora: '' }]; render(); }
+    else if (action === 'novo-bilhete-cancelar') { ui.novoBilheteOpen = false; ui.novoBilheteSelecoes = [{ descricao: '', jogo: '', data: '', hora: '' }]; ui.novoBilheteArquivoImagem = null; ui.novoBilheteCampos = null; render(); }
+    else if (action === 'ler-bilhete-ia') { lerBilheteComIA(); }
     else if (action === 'add-selecao') { ui.novoBilheteSelecoes.push({ descricao: '', jogo: '', data: '', hora: '' }); render(); }
     else if (action === 'remover-selecao') {
       var idx = Number(target.getAttribute('data-idx'));
