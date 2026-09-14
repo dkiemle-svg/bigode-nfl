@@ -73,11 +73,23 @@
     if (!raw) return null;
     var s = String(raw).trim();
     var m, y, mo, da;
-    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) { y = m[1]; mo = m[2]; da = m[3]; }
-    else if ((m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s))) { y = m[1]; mo = m[2]; da = m[3]; }
-    else if ((m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s))) { y = m[3]; mo = m[2]; da = m[1]; }
-    else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) { y = m[3]; mo = m[2]; da = m[1]; }
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) { y = m[1]; mo = Number(m[2]); da = Number(m[3]); }
+    else if ((m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s))) { y = m[1]; mo = Number(m[2]); da = Number(m[3]); }
+    else if ((m = /^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/.exec(s))) {
+      // aqui é ambíguo: pode ser DD-MM-AAAA (padrão BR, o que a IA deveria
+      // sempre evitar mas às vezes devolve) ou MM-DD-AAAA (padrão dos EUA,
+      // que a IA também já devolveu antes mesmo sendo instruída a não
+      // fazer isso). Se só uma das duas leituras faz sentido como mês
+      // (1 a 12), usa essa — só cai no "assume dia primeiro" quando as
+      // duas leituras são válidas e realmente não dá pra saber.
+      var a = Number(m[1]), b = Number(m[2]);
+      y = m[3];
+      if (a > 12 && b <= 12) { da = a; mo = b; }
+      else if (b > 12 && a <= 12) { da = b; mo = a; }
+      else { da = a; mo = b; }
+    }
     else return null;
+    if (!(mo >= 1 && mo <= 12) || !(da >= 1 && da <= 31)) return null;
     return y + '-' + String(mo).padStart(2, '0') + '-' + String(da).padStart(2, '0');
   }
   function parseYMD(ymd) {
