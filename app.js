@@ -971,15 +971,17 @@
   function renderCronogramaTab() {
     var out = '<div><h2 class="section-title">Cronograma</h2><p class="section-sub">Data e hora de todas as seleções dos bilhetes compartilhados — pra saber por quem torcer e quando.</p></div>';
 
+    var hoje = todayYMD();
     var items = [];
     state.bilhetes.forEach(function (b) {
       (b.selecoes || []).forEach(function (sel) {
         var dataNorm = normalizeYMD(sel.data);
         if (!dataNorm) return;
+        if (dataNorm < hoje) return; // já passou do dia do jogo — não mostra mais aqui
         items.push({ data: dataNorm, hora: sel.hora || '', jogo: sel.jogo || b.evento, descricao: sel.descricao, casa: b.casa, jogador: extractJogador(sel.descricao), times: extractTimes(sel.jogo || b.evento) });
       });
     });
-    if (!items.length) { out += '<div class="empty-state">Nenhum mercado com data marcada ainda.</div>'; return out; }
+    if (!items.length) { out += '<div class="empty-state">Nenhum jogo de hoje em diante marcado ainda.</div>'; return out; }
 
     var opcoes = itemFiltroOpcoes(state.bilhetes);
     var filtro = ui.filtros.cronograma;
