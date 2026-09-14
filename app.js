@@ -393,6 +393,17 @@
     sb.functions.invoke('live-scores', { body: { date: hoje } }).then(function (res) {
       ui.aoVivoCarregando = false;
       if (res.error) {
+        // res.error.message do supabase-js costuma ser só "Edge Function
+        // returned a non-2xx status code" — o motivo real vem no corpo da
+        // resposta, que fica guardado em res.error.context.
+        var ctx = res.error.context;
+        if (ctx && typeof ctx.clone === 'function' && typeof ctx.json === 'function') {
+          ctx.clone().json().catch(function () { return null; }).then(function (corpo) {
+            ui.aoVivoErro = 'Não deu pra buscar os placares agora: ' + ((corpo && corpo.erro) || res.error.message);
+            render();
+          });
+          return;
+        }
         ui.aoVivoErro = 'Não deu pra buscar os placares agora: ' + res.error.message;
         render();
         return;
