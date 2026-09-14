@@ -38,8 +38,8 @@
     cashoutEntrada: null, // id da entrada com o form de cashout aberto
     pendingDeleteBilhete: null,
     filtros: {
-      compartilhadas: { jogador: '', time: '', horario: '', casa: '' },
-      minhas: { jogador: '', time: '', horario: '', casa: '', semana: '' },
+      compartilhadas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
+      minhas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
       cronograma: { jogador: '', time: '', horario: '', casa: '' },
       financeiro: { semana: '', casa: '' }
     }
@@ -60,25 +60,46 @@
     var d = new Date(iso);
     return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
+  // Normaliza uma data pra "AAAA-MM-DD" estrito, aceitando alguns formatos
+  // alternativos (ex.: a IA às vezes devolve DD-MM-AAAA ou DD/MM/AAAA em vez
+  // do formato pedido). Se não reconhecer o formato, devolve null em vez de
+  // arriscar interpretar os campos na ordem errada (o que gerava datas
+  // completamente erradas — ex.: dia virando "ano").
+  function normalizeYMD(raw) {
+    if (!raw) return null;
+    var s = String(raw).trim();
+    var m, y, mo, da;
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s))) { y = m[1]; mo = m[2]; da = m[3]; }
+    else if ((m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s))) { y = m[1]; mo = m[2]; da = m[3]; }
+    else if ((m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(s))) { y = m[3]; mo = m[2]; da = m[1]; }
+    else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) { y = m[3]; mo = m[2]; da = m[1]; }
+    else return null;
+    return y + '-' + String(mo).padStart(2, '0') + '-' + String(da).padStart(2, '0');
+  }
   function parseYMD(ymd) {
-    var parts = (ymd || '').split('-').map(Number);
-    return new Date(parts[0], (parts[1] || 1) - 1, parts[2] || 1);
+    var norm = normalizeYMD(ymd);
+    if (!norm) return null;
+    var parts = norm.split('-').map(Number);
+    var d = new Date(parts[0], parts[1] - 1, parts[2]);
+    // confere que a data "bateu" (evita rollover silencioso tipo dia 32)
+    if (d.getFullYear() !== parts[0] || d.getMonth() !== parts[1] - 1 || d.getDate() !== parts[2]) return null;
+    return d;
   }
   function todayYMD() {
     var d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
   function fmtDateShort(ymd) {
-    if (!ymd) return '';
     var d = parseYMD(ymd);
+    if (!d) return '';
     var wd = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
     var dm = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
     return wd + ' ' + dm;
   }
   function dayLabel(ymd) {
-    var today = todayYMD();
     var d = parseYMD(ymd);
-    var t = parseYMD(today);
+    if (!d) return 'Data indefinida';
+    var t = parseYMD(todayYMD());
     var diffDays = Math.round((d - t) / 86400000);
     if (diffDays === 0) return 'Hoje · ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
     if (diffDays === 1) return 'Amanhã · ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
@@ -91,8 +112,8 @@
   // calendário vai de terça a segunda, então a âncora é a terça anterior.
   var SEASON_WEEK1_START = '2026-09-08';
   function weekNumberFor(ymd) {
-    if (!ymd) return null;
     var d = parseYMD(ymd);
+    if (!d) return null;
     var start = parseYMD(SEASON_WEEK1_START);
     var diffDays = Math.round((d - start) / 86400000);
     if (diffDays < 0) return 1;
@@ -136,6 +157,7 @@
   function extractTimes(jogo) {
     return (jogo || '').split(' x ').map(function (t) { return t.trim(); }).filter(Boolean);
   }
+  function normCasa(s) { return (s || '').trim().toLowerCase(); }
   function itemScheduleInfo(item) {
     var jogadores = {}, times = {}, horarios = [];
     (item.selecoes || []).forEach(function (sel) {
@@ -153,7 +175,7 @@
     items.forEach(function (b) {
       var info = itemScheduleInfo(b);
       info.times.forEach(function (t) { times[t] = true; });
-      if (b.casa) casas[b.casa] = true;
+      if (b.casa) { var ck = normCasa(b.casa); if (!casas[ck]) casas[ck] = b.casa.trim(); }
       info.horarios.forEach(function (h) {
         var key = h.data + '|' + h.hora;
         if (!horarios[key]) horarios[key] = { data: h.data, hora: h.hora, label: (dayLabel(h.data) + (h.hora ? ' · ' + h.hora : '')) };
@@ -161,7 +183,8 @@
     });
     var horariosList = Object.keys(horarios).map(function (k) { return horarios[k]; });
     horariosList.sort(function (a, b) { return (a.data + a.hora).localeCompare(b.data + b.hora); });
-    return { times: Object.keys(times).sort(), casas: Object.keys(casas).sort(), horarios: horariosList };
+    var casasList = Object.keys(casas).sort().map(function (k) { return casas[k]; });
+    return { times: Object.keys(times).sort(), casas: casasList, horarios: horariosList };
   }
   function aplicaItemFiltro(items, filtro) {
     var termo = (filtro.jogador || '').trim().toLowerCase();
@@ -172,13 +195,16 @@
         if (alvo.indexOf(termo) === -1) return false;
       }
       if (filtro.time && info.times.indexOf(filtro.time) === -1) return false;
-      if (filtro.casa && b.casa !== filtro.casa) return false;
+      if (filtro.casa && normCasa(b.casa) !== normCasa(filtro.casa)) return false;
       if (filtro.horario) {
         var bate = info.horarios.some(function (h) { return (h.data + '|' + h.hora) === filtro.horario; });
         if (!bate) return false;
       }
       if (filtro.semana) {
         if (String(itemPrimarySemana(b)) !== filtro.semana) return false;
+      }
+      if (filtro.status) {
+        if ((b.status || '') !== filtro.status) return false;
       }
       return true;
     });
@@ -332,7 +358,7 @@
       };
       if (dados.selecoes && dados.selecoes.length) {
         ui.novoBilheteSelecoes = dados.selecoes.map(function (s) {
-          return { descricao: s.descricao || '', jogo: s.jogo || '', data: s.data || '', hora: s.hora || '' };
+          return { descricao: s.descricao || '', jogo: s.jogo || '', data: normalizeYMD(s.data) || '', hora: s.hora || '' };
         });
       }
       showToast('Print lido! Confira os dados antes de postar.');
@@ -560,6 +586,13 @@
       out += '<option value="pos"' + (filtro.semana === 'pos' ? ' selected' : '') + '>Pós-temporada</option>';
       out += '</select></div>';
       return out;
+    },
+    status: function (opcoes, filtro, t) {
+      var opts = [['pendente', 'Pendente'], ['green', 'Green'], ['red', 'Red'], ['cashout', 'Cashout']];
+      var out = '<div class="field"><label>Status</label><select ' + t + ' data-filter="status"><option value="">Todos</option>';
+      opts.forEach(function (o) { out += '<option value="' + o[0] + '"' + (filtro.status === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
+      out += '</select></div>';
+      return out;
     }
   };
 
@@ -586,13 +619,19 @@
       return out;
     }
 
-    var opcoes = itemFiltroOpcoes(state.bilhetes);
+    var minhas = meusMapaEntradas();
+    var comStatus = state.bilhetes.map(function (b) {
+      var e = minhas[b.id];
+      var b2 = Object.assign({}, b);
+      b2.status = e ? e.status : '';
+      return b2;
+    });
+    var opcoes = itemFiltroOpcoes(comStatus);
     var filtro = ui.filtros.compartilhadas;
-    out += renderFiltroBar(opcoes, filtro, 'compartilhadas');
-    var filtrados = aplicaItemFiltro(state.bilhetes, filtro);
+    out += renderFiltroBar(opcoes, filtro, 'compartilhadas', ['jogador', 'time', 'horario', 'casa', 'semana', 'status']);
+    var filtrados = aplicaItemFiltro(comStatus, filtro);
     if (!filtrados.length) { out += '<div class="empty-state">Nenhum bilhete encontrado com esses filtros.</div>'; return out; }
 
-    var minhas = meusMapaEntradas();
     out += '<div class="bet-list">';
     filtrados.forEach(function (b) { out += renderBilheteCard(b, minhas[b.id]); });
     out += '</div>';
@@ -660,10 +699,20 @@
     out += '<div class="bet-meta">Registrado em ' + fmtDateTime(b.criado_em) + '</div>';
 
     var editOpen = ui.editEntrada === (minhaEntrada && minhaEntrada.id);
+    var cashoutOpenAqui = minhaEntrada && ui.cashoutEntrada === minhaEntrada.id;
+    var minhaResolvida = minhaEntrada && minhaEntrada.status !== 'pendente';
 
     out += '<div class="bet-actions">';
     if (minhaEntrada) {
+      out += '<span class="chip chip-status-' + minhaEntrada.status + '">' + statusLabel(minhaEntrada.status) + '</span>';
       out += '<span class="chip chip-mine">✓ Você pegou — ' + fmtBRL(minhaEntrada.valor) + ' · odd ' + fmtOdd(minhaEntrada.odd) + '</span>';
+      if (!minhaResolvida) {
+        out += '<button type="button" class="btn btn-win btn-sm" data-action="entrada-marcar" data-status="green" data-id="' + minhaEntrada.id + '">Green</button>';
+        out += '<button type="button" class="btn btn-loss btn-sm" data-action="entrada-marcar" data-status="red" data-id="' + minhaEntrada.id + '">Red</button>';
+        out += '<button type="button" class="btn btn-cashout btn-sm" data-action="entrada-cashout-abrir" data-id="' + minhaEntrada.id + '">Cashout</button>';
+      } else {
+        out += '<button type="button" class="btn btn-ghost btn-sm" data-action="entrada-reabrir" data-id="' + minhaEntrada.id + '">Reabrir</button>';
+      }
       out += '<button type="button" class="btn btn-ghost btn-sm" data-action="editar-entrada-abrir" data-id="' + minhaEntrada.id + '">Editar valor/retorno</button>';
       out += '<button type="button" class="btn btn-ghost btn-sm" data-action="desmarcar-entrada" data-id="' + minhaEntrada.id + '">Desmarcar</button>';
     } else {
@@ -685,6 +734,13 @@
         + '<div class="field"><label>Sua odd</label><input name="odd" type="number" step="0.01" min="0" value="' + minhaEntrada.odd + '" required></div>'
         + '<button type="submit" class="btn btn-primary btn-sm">Salvar</button>'
         + '<button type="button" class="btn btn-ghost btn-sm" data-action="editar-entrada-cancelar">Cancelar</button>'
+        + '</form>';
+    }
+    if (cashoutOpenAqui) {
+      out += '<form class="inline-form" data-form="entrada-cashout" data-id="' + minhaEntrada.id + '">'
+        + '<div class="field"><label>Valor recebido (R$)</label><input name="valor_cashout" type="number" min="0" step="0.01" required autofocus></div>'
+        + '<button type="submit" class="btn btn-cashout btn-sm">Confirmar</button>'
+        + '<button type="button" class="btn btn-ghost btn-sm" data-action="entrada-cashout-cancelar">Cancelar</button>'
         + '</form>';
     }
 
@@ -711,7 +767,7 @@
 
     var opcoes = itemFiltroOpcoes(todas);
     var filtro = ui.filtros.minhas;
-    out += renderFiltroBar(opcoes, filtro, 'minhas', ['jogador', 'time', 'horario', 'casa', 'semana']);
+    out += renderFiltroBar(opcoes, filtro, 'minhas', ['jogador', 'time', 'horario', 'casa', 'semana', 'status']);
     var filtradas = aplicaItemFiltro(todas, filtro);
     if (!filtradas.length) { out += '<div class="empty-state">Nenhuma aposta encontrada com esses filtros.</div>'; return out; }
 
@@ -789,8 +845,9 @@
     var items = [];
     state.bilhetes.forEach(function (b) {
       (b.selecoes || []).forEach(function (sel) {
-        if (!sel.data) return;
-        items.push({ data: sel.data, hora: sel.hora || '', jogo: sel.jogo || b.evento, descricao: sel.descricao, casa: b.casa, jogador: extractJogador(sel.descricao), times: extractTimes(sel.jogo || b.evento) });
+        var dataNorm = normalizeYMD(sel.data);
+        if (!dataNorm) return;
+        items.push({ data: dataNorm, hora: sel.hora || '', jogo: sel.jogo || b.evento, descricao: sel.descricao, casa: b.casa, jogador: extractJogador(sel.descricao), times: extractTimes(sel.jogo || b.evento) });
       });
     });
     if (!items.length) { out += '<div class="empty-state">Nenhum mercado com data marcada ainda.</div>'; return out; }
@@ -803,7 +860,7 @@
     var filtrados = items.filter(function (it) {
       if (termo && ((it.jogador || '') + ' ' + it.descricao).toLowerCase().indexOf(termo) === -1) return false;
       if (filtro.time && it.times.indexOf(filtro.time) === -1) return false;
-      if (filtro.casa && it.casa !== filtro.casa) return false;
+      if (filtro.casa && normCasa(it.casa) !== normCasa(filtro.casa)) return false;
       if (filtro.horario && (it.data + '|' + it.hora) !== filtro.horario) return false;
       return true;
     });
@@ -865,7 +922,7 @@
   }
 
   function renderSemanaResumoTable(items, casaFiltro) {
-    var base = casaFiltro ? items.filter(function (e) { return e.casa === casaFiltro; }) : items;
+    var base = casaFiltro ? items.filter(function (e) { return normCasa(e.casa) === normCasa(casaFiltro); }) : items;
     if (!base.length) return '<div class="empty-state">Você ainda não tem apostas registradas.</div>';
 
     var buckets = {};
@@ -1027,6 +1084,7 @@
       if (target.matches('[data-filter="horario"]')) { ui.filtros[tabKey].horario = target.value; render(); return; }
       if (target.matches('[data-filter="casa"]')) { ui.filtros[tabKey].casa = target.value; render(); return; }
       if (target.matches('[data-filter="semana"]')) { ui.filtros[tabKey].semana = target.value; render(); return; }
+      if (target.matches('[data-filter="status"]')) { ui.filtros[tabKey].status = target.value; render(); return; }
     }
   });
 
