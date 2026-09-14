@@ -131,7 +131,14 @@
   }
   function itemPrimarySemana(item) {
     var datas = [];
-    (item.selecoes || []).forEach(function (sel) { if (sel.data) datas.push(sel.data); });
+    (item.selecoes || []).forEach(function (sel) {
+      // normaliza ANTES de ordenar — se misturar formatos (AAAA-MM-DD com
+      // DD-MM-AAAA, por exemplo) um sort de texto cru escolhe a data
+      // "mais cedo" errada, e isso jogava a aposta pra semana errada (ou
+      // pra "sem data definida", se a data mais cedo crua fosse inválida).
+      var norm = normalizeYMD(sel.data);
+      if (norm) datas.push(norm);
+    });
     if (!datas.length) return null;
     datas.sort();
     return weekNumberFor(datas[0]);
