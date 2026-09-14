@@ -42,7 +42,7 @@
     aoVivoErro: '',
     aoVivoUltimaAtualizacao: null,
     filtros: {
-      compartilhadas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
+      compartilhadas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: 'pendente', peguei: '' },
       minhas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
       cronograma: { jogador: '', time: '', horario: '', casa: '' },
       financeiro: { semana: '', casa: '' }
@@ -684,14 +684,38 @@
     }
   };
 
+  // valores "padrão" de cada aba — usados pra saber se algum filtro está
+  // "ativo" (diferente do padrão) e pra onde "Limpar filtros" deve voltar.
+  var FILTRO_DEFAULTS = {
+    compartilhadas: { status: 'pendente' }
+  };
+
   function renderFiltroBar(opcoes, filtro, tabKey, campos) {
     campos = campos || ['jogador', 'time', 'horario', 'casa'];
-    var algumAtivo = campos.some(function (c) { return !!filtro[c]; });
+    var defaults = FILTRO_DEFAULTS[tabKey] || {};
+    // considera TODOS os campos do filtro dessa aba (não só os que aparecem
+    // nessa barra) — assim os botões rápidos de status/"já pegou" também
+    // contam pra mostrar o "Limpar filtros".
+    var algumAtivo = Object.keys(filtro).some(function (c) { return (filtro[c] || '') !== (defaults[c] || ''); });
     var t = 'data-filtertab="' + tabKey + '"';
     var out = '<div class="filter-bar">';
     campos.forEach(function (c) { out += FILTRO_CAMPOS[c](opcoes, filtro, t); });
     if (algumAtivo) out += '<button type="button" class="btn btn-ghost btn-sm" data-action="limpar-filtros" data-filtertab="' + tabKey + '">Limpar filtros</button>';
     out += '</div>';
+    return out;
+  }
+
+  // Filtro rápido em formato de botão (pill) — pra status e pra "já pegou"
+  // em Apostas Compartilhadas, uma forma mais rápida de conferir do que
+  // abrir um select.
+  function renderQuickFiltro(label, campo, opcoes, filtro, tabKey, extraClasse) {
+    var out = '<div class="quick-filtro-group"><span class="quick-filtro-label">' + escapeHtml(label) + '</span>';
+    out += '<div class="quick-filtro ' + extraClasse + '">';
+    opcoes.forEach(function (o) {
+      var ativo = (filtro[campo] || '') === o[0];
+      out += '<button type="button" class="quick-filtro-btn' + (ativo ? ' active' : '') + '" data-action="quick-filtro" data-filtertab="' + tabKey + '" data-campo="' + campo + '" data-value="' + escapeHtml(o[0]) + '">' + escapeHtml(o[1]) + '</button>';
+    });
+    out += '</div></div>';
     return out;
   }
 
@@ -711,13 +735,23 @@
     var comStatus = state.bilhetes.map(function (b) {
       var e = minhas[b.id];
       var b2 = Object.assign({}, b);
-      b2.status = e ? e.status : '';
+      // bilhete que você ainda nem marcou "peguei" conta como "pendente"
+      // também pro filtro rápido — ele ainda não tem resultado nenhum.
+      b2.status = e ? e.status : 'pendente';
       return b2;
     });
-    var opcoes = itemFiltroOpcoes(comStatus);
     var filtro = ui.filtros.compartilhadas;
-    out += renderFiltroBar(opcoes, filtro, 'compartilhadas', ['jogador', 'time', 'horario', 'casa', 'semana', 'status']);
+
+    out += '<div class="quick-filtros-row">';
+    out += renderQuickFiltro('Status', 'status', [['pendente', 'Pendentes'], ['green', 'Green'], ['red', 'Red'], ['', 'Todos']], filtro, 'compartilhadas', 'quick-filtro-status');
+    out += renderQuickFiltro('Você pegou?', 'peguei', [['', 'Todos'], ['sim', 'Já peguei'], ['nao', 'Não peguei']], filtro, 'compartilhadas', 'quick-filtro-peguei');
+    out += '</div>';
+
+    var opcoes = itemFiltroOpcoes(comStatus);
+    out += renderFiltroBar(opcoes, filtro, 'compartilhadas', ['jogador', 'time', 'horario', 'casa', 'semana']);
     var filtrados = aplicaItemFiltro(comStatus, filtro);
+    if (filtro.peguei === 'sim') filtrados = filtrados.filter(function (b) { return !!minhas[b.id]; });
+    else if (filtro.peguei === 'nao') filtrados = filtrados.filter(function (b) { return !minhas[b.id]; });
     if (!filtrados.length) { out += '<div class="empty-state">Nenhum bilhete encontrado com esses filtros.</div>'; return out; }
 
     out += '<div class="bet-list">';
@@ -1262,8 +1296,16 @@
     else if (action === 'aovivo-atualizar') { fetchAoVivo(false); }
     else if (action === 'limpar-filtros') {
       var tk = target.getAttribute('data-filtertab');
-      if (tk && ui.filtros[tk]) Object.keys(ui.filtros[tk]).forEach(function (k) { ui.filtros[tk][k] = ''; });
+      if (tk && ui.filtros[tk]) {
+        var defaults = FILTRO_DEFAULTS[tk] || {};
+        Object.keys(ui.filtros[tk]).forEach(function (k) { ui.filtros[tk][k] = defaults[k] != null ? defaults[k] : ''; });
+      }
       render();
+    }
+    else if (action === 'quick-filtro') {
+      var tkq = target.getAttribute('data-filtertab');
+      var campoq = target.getAttribute('data-campo');
+      if (tkq && ui.filtros[tkq] && campoq) { ui.filtros[tkq][campoq] = target.getAttribute('data-value'); render(); }
     }
     else if (action === 'novo-bilhete-abrir') { ui.novoBilheteOpen = true; render(); }
     else if (action === 'novo-bilhete-cancelar') { ui.novoBilheteOpen = false; ui.novoBilheteSelecoes = [{ descricao: '', jogo: '', data: '', hora: '' }]; ui.novoBilheteArquivoImagem = null; ui.novoBilheteCampos = null; render(); }
