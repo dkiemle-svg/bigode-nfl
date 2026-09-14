@@ -37,6 +37,10 @@
     editEntrada: null,   // id da entrada com o form de editar valor/odd aberto
     cashoutEntrada: null, // id da entrada com o form de cashout aberto
     pendingDeleteBilhete: null,
+    aoVivoDados: null,      // último resultado da Edge Function "live-scores"
+    aoVivoCarregando: false,
+    aoVivoErro: '',
+    aoVivoUltimaAtualizacao: null,
     filtros: {
       compartilhadas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
       minhas: { jogador: '', time: '', horario: '', casa: '', semana: '', status: '' },
@@ -158,6 +162,13 @@
     return (jogo || '').split(' x ').map(function (t) { return t.trim(); }).filter(Boolean);
   }
   function normCasa(s) { return (s || '').trim().toLowerCase(); }
+  // Pega só o "mascote" do nome do time (ex.: "SF 49ers" -> "49ers") pra
+  // conseguir casar com o que a ESPN devolve, já que nos bilhetes o time
+  // costuma vir como "sigla + mascote".
+  function mascotOf(s) {
+    var parts = (s || '').trim().split(/\s+/);
+    return parts.length ? parts[parts.length - 1].toLowerCase() : '';
+  }
   function itemScheduleInfo(item) {
     var jogadores = {}, times = {}, horarios = [];
     (item.selecoes || []).forEach(function (sel) {
@@ -307,6 +318,7 @@
 
   function handleLogout() {
     unsubscribeRealtime();
+    pararAoVivo();
     sb.auth.signOut();
   }
 
@@ -368,6 +380,69 @@
       showToast('Não deu pra ler o print agora. Tente de novo ou preencha manualmente.');
       render();
     });
+  }
+
+  // ---------------- Ao vivo (placares) ----------------
+
+  var aoVivoTimer = null;
+  var AOVIVO_INTERVALO_MS = 45000;
+
+  function fetchAoVivo(silencioso) {
+    if (!silencioso) { ui.aoVivoCarregando = true; render(); }
+    var hoje = todayYMD().replace(/-/g, '');
+    sb.functions.invoke('live-scores', { body: { date: hoje } }).then(function (res) {
+      ui.aoVivoCarregando = false;
+      if (res.error) {
+        ui.aoVivoErro = 'Não deu pra buscar os placares agora: ' + res.error.message;
+        render();
+        return;
+      }
+      var dados = res.data;
+      if (!dados || dados.erro) {
+        ui.aoVivoErro = (dados && dados.erro) ? dados.erro : 'Não deu pra ler os placares agora.';
+        render();
+        return;
+      }
+      ui.aoVivoErro = '';
+      ui.aoVivoDados = dados;
+      ui.aoVivoUltimaAtualizacao = new Date();
+      render();
+    }).catch(function () {
+      ui.aoVivoCarregando = false;
+      ui.aoVivoErro = 'Não deu pra buscar os placares agora. Confira se a função "live-scores" está publicada no Supabase.';
+      render();
+    });
+  }
+
+  function pararAoVivo() {
+    clearInterval(aoVivoTimer);
+    aoVivoTimer = null;
+  }
+
+  function iniciarAoVivo() {
+    pararAoVivo();
+    fetchAoVivo(false);
+    aoVivoTimer = setInterval(function () { fetchAoVivo(true); }, AOVIVO_INTERVALO_MS);
+  }
+
+  // Acha, dentro do último resultado da ESPN, o jogo que bate com esse par
+  // de times (ou só um time, se for o que a gente sabe).
+  function espnEventFor(times) {
+    if (!ui.aoVivoDados || !ui.aoVivoDados.events || !ui.aoVivoDados.events.length) return null;
+    var wanted = (times || []).map(mascotOf).filter(Boolean);
+    if (!wanted.length) return null;
+    var events = ui.aoVivoDados.events;
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
+      var mCasa = mascotOf(ev.casa && ev.casa.mascote);
+      var mFora = mascotOf(ev.fora && ev.fora.mascote);
+      if (wanted.length >= 2) {
+        if ((wanted.indexOf(mCasa) !== -1) && (wanted.indexOf(mFora) !== -1)) return ev;
+      } else {
+        if (mCasa === wanted[0] || mFora === wanted[0]) return ev;
+      }
+    }
+    return null;
   }
 
   function uploadImagemBilhete(file) {
@@ -545,11 +620,13 @@
     out += tabButton('minhas', 'Minhas Apostas', minhasEntradas.length);
     out += tabButton('financeiro', 'Financeiro', null);
     out += tabButton('cronograma', 'Cronograma', null);
+    out += tabButton('aovivo', '🔴 Ao Vivo', null);
     out += '</nav>';
     out += '<main class="panel">';
     if (ui.activeTab === 'minhas') out += renderMinhasTab();
     else if (ui.activeTab === 'financeiro') out += renderFinanceiroTab();
     else if (ui.activeTab === 'cronograma') out += renderCronogramaTab();
+    else if (ui.activeTab === 'aovivo') out += renderAoVivoTab();
     else out += renderCompartilhadasTab();
     out += '</main>';
     out += '</div>';
@@ -881,6 +958,76 @@
     return out;
   }
 
+  // ---------------- render: Ao Vivo ----------------
+
+  function statusAoVivoLabel(ev) {
+    if (!ev) return null;
+    var s = ev.status || {};
+    if (s.estado === 'in') {
+      var periodo = s.periodo ? (s.periodo + 'º quarto') : 'Ao vivo';
+      return { classe: 'ao-vivo-status-in', texto: '🔴 ' + periodo + (s.relogio ? ' · ' + s.relogio : '') };
+    }
+    if (s.estado === 'post' || s.encerrado) {
+      return { classe: 'ao-vivo-status-post', texto: 'Encerrado' + (s.detalhe ? ' · ' + s.detalhe : '') };
+    }
+    return { classe: 'ao-vivo-status-pre', texto: 'Ainda não começou' + (s.detalhe ? ' · ' + s.detalhe : '') };
+  }
+
+  function renderAoVivoTab() {
+    var out = '<div><h2 class="section-title">Ao vivo</h2><p class="section-sub">Placar e andamento dos jogos de hoje que aparecem nos bilhetes do grupo. Atualiza sozinho a cada ' + Math.round(AOVIVO_INTERVALO_MS / 1000) + ' segundos.</p></div>';
+
+    var atualizarBtn = '<button type="button" class="btn btn-ghost btn-sm" data-action="aovivo-atualizar" ' + (ui.aoVivoCarregando ? 'disabled' : '') + '>' + (ui.aoVivoCarregando ? 'Atualizando…' : '🔄 Atualizar agora') + '</button>';
+    var statusLinha = ui.aoVivoUltimaAtualizacao ? ('<span class="helper-text">Última atualização: ' + fmtDateTime(ui.aoVivoUltimaAtualizacao.toISOString()) + '</span>') : '';
+    out += '<div class="bet-actions">' + atualizarBtn + statusLinha + '</div>';
+
+    if (ui.aoVivoErro) {
+      out += '<div class="auth-error">' + escapeHtml(ui.aoVivoErro) + ' Confira se a função "live-scores" foi publicada no Supabase (passo opcional do README).</div>';
+    }
+
+    var hoje = todayYMD();
+    var grupos = {};
+    var ordem = [];
+    state.bilhetes.forEach(function (b) {
+      (b.selecoes || []).forEach(function (sel) {
+        if (normalizeYMD(sel.data) !== hoje) return;
+        var times = extractTimes(sel.jogo || b.evento);
+        var key = times.length ? times.slice().sort().join('|').toLowerCase() : (sel.jogo || b.evento || '');
+        if (!grupos[key]) { grupos[key] = { jogo: sel.jogo || b.evento, times: times, itens: [] }; ordem.push(key); }
+        grupos[key].itens.push({ descricao: sel.descricao, casa: b.casa, hora: sel.hora || '' });
+      });
+    });
+
+    if (!ordem.length) {
+      out += '<div class="empty-state">Nenhum jogo de hoje entre os bilhetes postados ainda.</div>';
+      return out;
+    }
+
+    out += '<div class="bet-list">';
+    ordem.forEach(function (key) {
+      var g = grupos[key];
+      var ev = espnEventFor(g.times);
+      var st = statusAoVivoLabel(ev);
+      out += '<div class="card ao-vivo-jogo">';
+      out += '<div class="ao-vivo-status ' + (st ? st.classe : '') + '">' + (st ? escapeHtml(st.texto) : (ui.aoVivoDados ? 'Sem dados ao vivo pra esse jogo ainda' : 'Carregando placar…')) + '</div>';
+      if (ev) {
+        out += '<div class="ao-vivo-placar">'
+          + '<div class="ao-vivo-time"><span>' + escapeHtml(ev.fora.nome || ev.fora.mascote) + '</span><b>' + (ev.fora.placar != null ? ev.fora.placar : '–') + '</b></div>'
+          + '<span class="ao-vivo-vs">x</span>'
+          + '<div class="ao-vivo-time"><span>' + escapeHtml(ev.casa.nome || ev.casa.mascote) + '</span><b>' + (ev.casa.placar != null ? ev.casa.placar : '–') + '</b></div>'
+          + '</div>';
+      } else {
+        out += '<div class="bet-event">' + escapeHtml(g.jogo) + '</div>';
+      }
+      out += '<div class="schedule-sub">Suas seleções nesse jogo:</div>';
+      out += '<ul class="selecoes-list">' + g.itens.map(function (it) {
+        return '<li class="selecao-item"><div class="selecao-desc">' + escapeHtml(it.descricao) + '</div><div class="selecao-meta">' + escapeHtml(it.casa) + (it.hora ? ' · ' + escapeHtml(it.hora) : '') + '</div></li>';
+      }).join('') + '</ul>';
+      out += '</div>';
+    });
+    out += '</div>';
+    return out;
+  }
+
   // ---------------- render: Financeiro ----------------
 
   function renderFinanceiroTab() {
@@ -1096,7 +1243,12 @@
 
     if (action === 'auth-toggle') { ui.authMode = ui.authMode === 'login' ? 'signup' : 'login'; ui.authError = ''; ui.authInfo = ''; render(); }
     else if (action === 'logout') { handleLogout(); }
-    else if (action === 'switch-tab') { ui.activeTab = target.getAttribute('data-tab'); ui.editEntrada = null; ui.cashoutEntrada = null; ui.pendingDeleteBilhete = null; render(); }
+    else if (action === 'switch-tab') {
+      ui.activeTab = target.getAttribute('data-tab'); ui.editEntrada = null; ui.cashoutEntrada = null; ui.pendingDeleteBilhete = null;
+      if (ui.activeTab === 'aovivo') iniciarAoVivo(); else pararAoVivo();
+      render();
+    }
+    else if (action === 'aovivo-atualizar') { fetchAoVivo(false); }
     else if (action === 'limpar-filtros') {
       var tk = target.getAttribute('data-filtertab');
       if (tk && ui.filtros[tk]) Object.keys(ui.filtros[tk]).forEach(function (k) { ui.filtros[tk][k] = ''; });

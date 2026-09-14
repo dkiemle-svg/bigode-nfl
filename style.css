@@ -218,6 +218,17 @@ td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .bet-print-link{ display:inline-block; align-self:flex-start; }
 .bet-print-img{ max-width:220px; max-height:220px; object-fit:cover; border-radius:var(--radius-sm); border:1px solid var(--border); }
 
+.ao-vivo-jogo{ display:flex; flex-direction:column; gap:10px; }
+.ao-vivo-status{ font-size:.74rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); }
+.ao-vivo-status-in{ color:var(--loss); }
+.ao-vivo-status-post{ color:var(--text-faint); }
+.ao-vivo-status-pre{ color:var(--accent-strong); }
+.ao-vivo-placar{ display:flex; align-items:center; gap:16px; }
+.ao-vivo-time{ display:flex; flex-direction:column; align-items:center; gap:3px; min-width:110px; }
+.ao-vivo-time span{ font-size:.78rem; color:var(--text-muted); font-weight:600; text-align:center; }
+.ao-vivo-time b{ font-size:1.5rem; font-variant-numeric:tabular-nums; }
+.ao-vivo-vs{ color:var(--text-faint); font-size:.8rem; font-weight:700; }
+
 @media (max-width:640px){
   .app-shell{ padding:18px 14px 70px; }
   .selecao-row{ grid-template-columns:1fr; }
